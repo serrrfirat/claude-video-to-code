@@ -1,6 +1,6 @@
 ---
 name: video-to-code
-description: Convert video animations and GIF interactions into working React code. Use when the user shares a video URL, GIF, or webpage containing an animation they want to replicate. Triggers include "video to code", "replicate this animation", "build this interaction", "code this GIF", "implement this motion", "recreate this effect".
+description: Convert video animations and GIF interactions into working React code. Use when the user shares a video URL, GIF, or webpage containing an animation they want to replicate. Triggers include "video to code", "replicate this animation", "build this interaction", "code this GIF", "implement this motion", "recreate this effect". After iterating, use /video-to-code:export to integrate into the project.
 ---
 
 # Video to Code
@@ -11,42 +11,22 @@ Convert video animations, GIFs, and interactive demos into production-ready Reac
 
 1. **Receive** - User provides a video URL, GIF, or webpage with animation
 2. **Download** - Try direct fetch, fallback to Puppeteer for authenticated URLs
-3. **Analyze** - Send to Gemini 2.5 Flash for frame-by-frame visual analysis
-4. **Generate** - Create implementation in Animation Lab
-5. **Preview** - User reviews at `/__animation_lab` route
-6. **Feedback** - Collect feedback with AskUserQuestion, iterate until perfect
-7. **Finalize** - Export component, clean up temp files
+3. **Extract Frames** - Use ffmpeg to extract key frames for visual reference
+4. **Analyze** - Review frames visually + send video to Gemini 2.5 Flash
+5. **Generate** - Create standalone Animation Lab in `/tmp/animation-lab`
+6. **Preview** - User reviews at `http://localhost:5173`
+7. **Feedback** - Iterate until animation matches original
+8. **Export** - Use `/video-to-code:export` to integrate into user's project
 
 ---
 
-## Phase 0: Preflight Detection
+## Phase 0: Preflight Check
 
-Before starting, automatically detect:
-
-### Environment Check
 ```bash
 echo $GEMINI_API_KEY
 ```
 
 **If missing:** Stop and direct user to Setup section.
-
-### Framework Detection
-Check for config files:
-- `next.config.js` or `next.config.mjs` or `next.config.ts` → **Next.js**
-  - Check for `app/` directory → App Router
-  - Check for `pages/` directory → Pages Router
-- `vite.config.js` or `vite.config.ts` → **Vite**
-- Other frameworks: adapt route creation accordingly
-
-### Package Manager Detection
-- `pnpm-lock.yaml` → use `pnpm`
-- `yarn.lock` → use `yarn`
-- `package-lock.json` → use `npm`
-- `bun.lockb` → use `bun`
-
-### Check for Animation Libraries
-- `framer-motion` in dependencies → preferred for spring physics
-- `react-spring`, `gsap`, etc.
 
 ---
 
@@ -59,7 +39,7 @@ Ask the user for:
 
 ---
 
-## Phase 2: Download Video
+## Phase 2: Download Video & Extract Frames
 
 ### Step 2.1: Try Direct Download First
 
@@ -135,9 +115,46 @@ Run it:
 cd /tmp && npm install puppeteer && node /tmp/download-video.mjs
 ```
 
+### Step 2.3: Extract Key Frames with ffmpeg
+
+**Always extract frames** - this provides critical visual reference that improves analysis accuracy:
+
+```bash
+# Create frames directory and extract frames at 2fps
+mkdir -p /tmp/animation-frames
+ffmpeg -i /tmp/animation.mp4 -vf "fps=2" /tmp/animation-frames/frame_%03d.png -y
+
+# Check how many frames were extracted
+ls /tmp/animation-frames/*.png | wc -l
+```
+
+Then read the frames to understand the animation visually:
+```bash
+# List the frames
+ls -la /tmp/animation-frames/
+```
+
+Use the Read tool to view the extracted frames. Look for:
+- Visual layout and structure
+- Color palette (note hex codes)
+- Animation progression (what changes frame to frame)
+- Element positions and sizes
+- Any text content and fonts
+
+**Why frames matter:** Gemini video analysis can miss details or hallucinate. Frames provide ground truth you can verify visually.
+
 ---
 
 ## Phase 3: Analyze with Gemini
+
+**Best practice:** Combine frame analysis (from Step 2.3) with Gemini's video analysis:
+1. First, review the extracted frames yourself to understand the animation
+2. Then run Gemini for additional details (timing, easing, interactions)
+3. Cross-reference Gemini's output against the frames - trust frames when they conflict
+
+If Gemini is unavailable (503 errors after retries), you can proceed with frame analysis alone.
+
+### Step 3.1: Run Gemini Analysis
 
 Create and run analysis script:
 
@@ -148,25 +165,37 @@ import fs from "fs";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-const ANALYSIS_PROMPT = `Watch this video carefully, frame by frame. Your job is to write a detailed implementation spec that another AI (Claude) will use to code this exact interaction.
+const ANALYSIS_PROMPT = `Watch this video carefully, frame by frame. Your job is to write a detailed implementation spec that another AI (Claude) will use to code this exact animation.
 
-Output the following:
+First, identify the animation type:
+- Is it interactive (responds to mouse/touch)?
+- Is it time-based (plays automatically on load)?
+- Is it scroll-triggered?
+- Is it a combination?
 
-1. **Visual inventory**: List every visual element on screen (shapes, illustrations, icons, text). Describe their appearance, colors, size ratios, and positions.
+Then describe:
 
-2. **Interaction mechanics**: Describe exactly how elements respond to the mouse cursor. Which elements move? How much? In which direction relative to cursor movement? Are some elements inverted (moving opposite to cursor)?
+1. **Layout**: What is the overall structure? (single element, grid, columns, side-by-side, layers, terminal window, etc.) Describe the container and how elements are positioned relative to each other.
 
-3. **Parallax layers**: Identify the depth layers. Which elements move most (foreground)? Which move least (background)? Estimate the movement ratio for each layer.
+2. **Visual elements**: List EVERY element on screen. For each element describe: exact appearance, colors (use hex codes), position, size, font/typography if text.
 
-4. **Motion characteristics**: Describe the easing/physics. Is it linear? Springy? Smooth with inertia? How quickly do elements respond? Is there any delay or overshoot?
+3. **Animation sequence**: How does the animation progress? What changes over time? In what order do things appear/move/transform? Describe each step.
 
-5. **Boundaries**: Does the movement have limits? Do elements stop at certain positions or follow the cursor infinitely?
+4. **Timing**: Total duration, delays between steps, easing functions (linear, ease-in-out, spring, etc.), frame rate if relevant.
 
-6. **Idle state**: What happens when the mouse isn't moving or leaves the area?
+5. **Trigger**: What starts the animation? (page load, mouse enter, scroll position, click, hover, etc.)
 
-Format this as a direct implementation prompt starting with: "Build a React component that..."
+6. **Final state**: What does it look like when the animation completes? Describe the end result in detail.
 
-Be extremely specific. Include pixel estimates, percentages, timing in milliseconds, and easing function suggestions where possible.`;
+Format your response as: "Build a React component that..."
+
+Be extremely specific with:
+- Colors (hex codes like #1e1e1e)
+- Sizes (px or %)
+- Timing (milliseconds)
+- Exact text content if any
+- Font styles (monospace, serif, size, weight)
+- Border radius, shadows, spacing`;
 
 async function analyzeVideo() {
   const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
@@ -175,22 +204,43 @@ async function analyzeVideo() {
   const base64Video = videoData.toString("base64");
 
   console.log("Video size:", videoData.length, "bytes");
-  console.log("Sending to Gemini...\n");
 
-  const result = await model.generateContent([
-    {
-      inlineData: {
-        mimeType: "video/mp4",
-        data: base64Video,
-      },
-    },
-    { text: ANALYSIS_PROMPT },
-  ]);
+  const maxRetries = 3;
+  const retryDelay = 5000; // 5 seconds
 
-  console.log(result.response.text());
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`Sending to Gemini (attempt ${attempt}/${maxRetries})...\n`);
+
+      const result = await model.generateContent([
+        {
+          inlineData: {
+            mimeType: "video/mp4",
+            data: base64Video,
+          },
+        },
+        { text: ANALYSIS_PROMPT },
+      ]);
+
+      console.log(result.response.text());
+      return; // Success - exit
+    } catch (err) {
+      if (err.status === 503 && attempt < maxRetries) {
+        console.log(`Model overloaded, retrying in ${retryDelay/1000}s...`);
+        await new Promise(r => setTimeout(r, retryDelay));
+      } else {
+        // Don't fallback to different model - fail and let user retry later
+        throw new Error(`Gemini 2.5 Flash unavailable after ${attempt} attempts: ${err.message}`);
+      }
+    }
+  }
 }
 
-analyzeVideo().catch(console.error);
+analyzeVideo().catch(err => {
+  console.error(err.message);
+  console.log("\nPlease try again in a few minutes when the model is less busy.");
+  process.exit(1);
+});
 ```
 
 Run it:
@@ -204,143 +254,148 @@ cd /tmp && npm install @google/generative-ai && node /tmp/analyze-video.mjs
 
 ## Phase 4: Generate Animation Lab
 
-### Directory Structure
+Create a standalone React app in `/tmp/animation-lab`:
 
-Create all files under `.claude-animation/`:
+### Step 4.1: Create Project Structure
 
-```
-.claude-animation/
-├── lab/
-│   └── Animation.tsx            # Current implementation
-├── gemini-spec.md               # Raw Gemini analysis
-└── iteration-log.md             # Track changes across iterations
+```bash
+mkdir -p /tmp/animation-lab/src
 ```
 
-### Save the Gemini Spec
+### Step 4.2: Create package.json
 
-Save the Gemini output to `.claude-animation/gemini-spec.md` for reference.
-
-### Create Animation Component
-
-Implement the animation in `.claude-animation/lab/Animation.tsx` based on the Gemini spec.
-
-**For spring/parallax animations, use framer-motion:**
-```tsx
-import { motion, useMotionValue, useSpring } from 'framer-motion';
-
-// Spring config - adjust these during iteration
-const springConfig = { stiffness: 100, damping: 15, mass: 0.8 };
+```bash
+cat > /tmp/animation-lab/package.json << 'EOF'
+{
+  "name": "animation-lab",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "framer-motion": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "typescript": "^5.2.0",
+    "vite": "^5.0.0"
+  }
+}
+EOF
 ```
 
-### Create Animation Lab Page
+### Step 4.3: Create Vite Config
 
-Create a page file in the app that imports from `.claude-animation/lab/Animation.tsx`:
+```bash
+cat > /tmp/animation-lab/vite.config.ts << 'EOF'
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
-**For Vite (create `src/pages/AnimationLabPage.tsx`):**
-```tsx
-import { useState } from 'react';
-import { Animation } from '../../../.claude-animation/lab/Animation';
+export default defineConfig({
+  plugins: [react()],
+})
+EOF
+```
 
-export function AnimationLabPage() {
-  const [fullscreen, setFullscreen] = useState(false);
+### Step 4.4: Create index.html
+
+```bash
+cat > /tmp/animation-lab/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Animation Lab</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { background: #09090b; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+EOF
+```
+
+### Step 4.5: Create main.tsx
+
+```bash
+cat > /tmp/animation-lab/src/main.tsx << 'EOF'
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import { Animation } from './Animation'
+
+function App() {
+  const [iteration, setIteration] = React.useState(1)
+  const [key, setKey] = React.useState(0)
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#09090b', color: 'white' }}>
-      {/* Header */}
       <div style={{
-        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
-        backgroundColor: 'rgba(24, 24, 27, 0.9)',
+        padding: '12px 20px',
+        backgroundColor: '#18181b',
         borderBottom: '1px solid #27272a',
-        padding: '16px 24px',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        fontFamily: 'system-ui, sans-serif',
       }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 600 }}>
-            <span style={{ color: '#10b981' }}>Animation Lab</span>
-            <span style={{ color: '#71717a', margin: '0 8px' }}>•</span>
-            <span style={{ color: '#a1a1aa' }}>Iteration 1</span>
-          </h1>
-          <p style={{ fontSize: 14, color: '#71717a', marginTop: 4 }}>
-            [Animation description here]
-          </p>
+          <span style={{ color: '#10b981', fontWeight: 600 }}>Animation Lab</span>
+          <span style={{ color: '#525252', margin: '0 8px' }}>•</span>
+          <span style={{ color: '#a1a1aa' }}>Iteration {iteration}</span>
         </div>
         <button
-          onClick={() => setFullscreen(!fullscreen)}
+          onClick={() => setKey(k => k + 1)}
           style={{
-            padding: '6px 12px', fontSize: 14,
-            backgroundColor: '#27272a', color: '#a1a1aa',
-            borderRadius: 6, border: 'none', cursor: 'pointer'
+            padding: '6px 12px',
+            backgroundColor: '#27272a',
+            color: '#a1a1aa',
+            border: 'none',
+            borderRadius: 4,
+            cursor: 'pointer',
+            fontSize: 13,
           }}
         >
-          {fullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+          Replay
         </button>
       </div>
-
-      {/* Preview */}
-      <div style={{ paddingTop: 80 }}>
-        <div style={{ height: fullscreen ? '100vh' : 600 }}>
-          <Animation />
-        </div>
+      <div style={{ height: 'calc(100vh - 49px)' }}>
+        <Animation key={key} />
       </div>
-
-      {/* Info Panel */}
-      {!fullscreen && (
-        <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
-          <div style={{
-            padding: 16, backgroundColor: '#18181b',
-            borderRadius: 8, border: '1px solid #27272a'
-          }}>
-            <h3 style={{ fontSize: 14, color: '#a1a1aa', marginBottom: 12 }}>
-              Implementation Details
-            </h3>
-            <ul style={{ fontSize: 14, color: '#d4d4d8' }}>
-              <li>Library: framer-motion</li>
-              <li>Spring: stiffness X, damping Y</li>
-              {/* Add relevant details */}
-            </ul>
-          </div>
-        </div>
-      )}
     </div>
-  );
+  )
 }
+
+ReactDOM.createRoot(document.getElementById('root')!).render(<App />)
+EOF
 ```
 
-### Add Route
+### Step 4.6: Create Animation.tsx
 
-**Vite with React Router (update `App.tsx`):**
-```tsx
-import { AnimationLabPage } from './pages/AnimationLabPage'
+Create `/tmp/animation-lab/src/Animation.tsx` with the implementation based on the Gemini spec.
 
-// Add route:
-<Route path="/__animation_lab" element={<AnimationLabPage />} />
+### Step 4.7: Save Gemini Spec
+
+Save the raw Gemini output to `/tmp/animation-lab/gemini-spec.md` for reference.
+
+### Step 4.8: Install & Start
+
+```bash
+cd /tmp/animation-lab && npm install && npm run dev
 ```
 
-### Initialize Iteration Log
-
-Create `.claude-animation/iteration-log.md`:
-```markdown
-# Animation Iteration Log
-
-## Source
-- URL: [original URL]
-- Type: [animation type]
-
----
-
-## Iteration 1
-
-**Date:** [date]
-
-**Implementation:**
-- Library: framer-motion
-- Spring config: { stiffness: X, damping: Y, mass: Z }
-- [other details]
-
-**Feedback:** (awaiting)
-
----
-```
+Run this in the background or tell the user to run it.
 
 ---
 
@@ -351,13 +406,12 @@ After generating files, tell the user:
 ```
 ✅ Animation Lab created! (Iteration 1)
 
-Preview at: http://localhost:[PORT]/__animation_lab
+Preview at: http://localhost:5173
 
-Move your mouse around to test the interaction.
 Compare it to the original and let me know what needs adjusting.
-```
 
-**IMPORTANT:** Do NOT run the dev server yourself - it blocks forever. User should have it running or start it themselves.
+When you're happy with the result, run /video-to-code:export to add it to your project.
+```
 
 ---
 
@@ -407,21 +461,8 @@ Then ask for specific details in chat.
 
 ### Step 3: Apply Changes
 
-1. Update `.claude-animation/lab/Animation.tsx`
-2. Log changes in `.claude-animation/iteration-log.md`:
-```markdown
-## Iteration 2
-
-**Date:** [date]
-
-**Changes:**
-- Increased dot size from 2.5px to 4px
-- Increased cube size from 70px to 100px
-- Adjusted spring: stiffness 100 → 80
-
-**Feedback:** (awaiting)
-```
-
+1. Update `/tmp/animation-lab/src/Animation.tsx`
+2. The dev server will hot-reload automatically
 3. Tell user to check the preview again
 4. Repeat feedback loop
 
@@ -431,54 +472,9 @@ Then ask for specific details in chat.
 
 When user says "Perfect!" or approves:
 
-### 7.1: Ask Export Location
+Tell them to run `/video-to-code:export` to integrate the animation into their project.
 
-Use AskUserQuestion:
-```
-Question: "Where should I save the final component?"
-Header: "Export"
-Options:
-- "packages/ui/src/components/" - Shared UI package
-- "src/components/" - App components folder
-- "Keep in .claude-animation/" - Don't move, I'll handle it
-```
-
-### 7.2: Export Component
-
-Copy `.claude-animation/lab/Animation.tsx` to chosen location:
-- Rename to PascalCase (e.g., `InteractiveBackground.tsx`)
-- Clean up imports
-- Add TypeScript props interface
-- Add to package index if needed
-
-### 7.3: Cleanup
-
-Delete all temporary files:
-```bash
-rm -rf .claude-animation/
-```
-
-Remove route from `App.tsx` and delete `AnimationLabPage.tsx`.
-
-### 7.4: Summary
-
-```
-✅ Animation component finalized!
-
-Component saved to: [path]
-
-Implementation:
-- Library: framer-motion
-- Animation type: [type]
-- Iterations: [count]
-
-Usage:
-import { ComponentName } from '[path]'
-
-<ComponentName />
-
-All temporary files cleaned up.
-```
+The animation component stays in `/tmp/animation-lab/src/Animation.tsx` until exported.
 
 ---
 
@@ -486,10 +482,12 @@ All temporary files cleaned up.
 
 If user says "cancel", "abort", "stop", "nevermind", or indicates they don't need it:
 
-1. Confirm: "Got it - cleaning up temporary files."
-2. Delete `.claude-animation/` directory
-3. Remove route and AnimationLabPage
-4. Acknowledge: "Animation lab cleaned up."
+1. Confirm: "Got it - cleaning up."
+2. Delete the temp directory:
+```bash
+rm -rf /tmp/animation-lab
+```
+3. Acknowledge: "Animation lab cleaned up."
 
 ---
 
@@ -527,15 +525,109 @@ Then `source ~/.zshrc` and restart Claude Code.
 The skill installs these in `/tmp` as needed:
 - `@google/generative-ai` - Gemini API
 - `puppeteer` - Video download from authenticated URLs
-
-Project should have `framer-motion` for most animations.
+- `react`, `vite`, `framer-motion` - For the standalone Animation Lab
 
 ---
 
 ## Tips
 
 - Videos should be 5-30 seconds showing the interaction clearly
+- **Always extract frames** - they provide ground truth when Gemini's analysis is unclear
+- Frame extraction is especially useful for:
+  - Complex animations with multiple elements
+  - Precise color matching (pick hex codes directly from frames)
+  - Understanding exact animation sequences
+  - When Gemini gives vague or incorrect descriptions
+- If Gemini is overloaded (503 errors), you can often proceed using frame analysis alone
 - Gemini needs `inlineData` (base64) - it won't fetch URLs
 - Use Puppeteer when direct download fails (auth errors)
 - Start with Gemini's suggested values, then iterate based on feel
 - Common iterations: 2-4 rounds to match the original
+
+---
+
+# /video-to-code:export
+
+Export the finalized animation component from the Animation Lab into the user's project.
+
+## When to Use
+
+Run this after the user is happy with the animation in `/tmp/animation-lab`.
+
+## Workflow
+
+### 1. Verify Animation Lab Exists
+
+```bash
+ls /tmp/animation-lab/src/Animation.tsx
+```
+
+If not found, tell user to run `/video-to-code` first.
+
+### 2. Detect Project Framework
+
+Check for config files in the current working directory:
+- `next.config.js` or `next.config.mjs` or `next.config.ts` → **Next.js**
+- `vite.config.js` or `vite.config.ts` → **Vite**
+- `package.json` with react → **React (generic)**
+
+### 3. Ask Export Location
+
+Use AskUserQuestion:
+```
+Question: "Where should I save the animation component?"
+Header: "Location"
+Options:
+- "src/components/" - Components folder
+- "Let me specify" - Custom path
+```
+
+### 4. Ask Component Name
+
+Use AskUserQuestion:
+```
+Question: "What should the component be named?"
+Header: "Name"
+Options:
+- "[Descriptive name based on animation]" - e.g., "AsciiLogoAnimation"
+- "Animation" - Keep generic name
+- "Let me specify" - Custom name
+```
+
+### 5. Copy & Adapt Component
+
+1. Read `/tmp/animation-lab/src/Animation.tsx`
+2. Copy to chosen location with chosen name
+3. Adjust imports if needed (check if framer-motion is installed)
+4. Add TypeScript props interface if needed
+
+### 6. Check Dependencies
+
+If the animation uses libraries not in the project:
+```bash
+# Check if framer-motion is needed and missing
+grep "framer-motion" package.json
+```
+
+If missing, ask user if they want to install it.
+
+### 7. Cleanup
+
+```bash
+rm -rf /tmp/animation-lab
+```
+
+### 8. Summary
+
+```
+✅ Animation exported!
+
+Component: [path/ComponentName.tsx]
+
+Usage:
+import { ComponentName } from '[path]'
+
+<ComponentName />
+
+Animation Lab cleaned up.
+```
