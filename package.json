@@ -1,0 +1,26 @@
+{
+  "name": "claude-video-to-code",
+  "version": "1.0.0",
+  "description": "Convert video animations and GIFs into React components using AI-powered frame-by-frame analysis",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "video",
+    "animation",
+    "react",
+    "framer-motion",
+    "gemini",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/firatsertgoz/claude-video-to-code.git"
+  },
+  "claude-code": {
+    "skills": [
+      "skills/video-to-code"
+    ]
+  }
+}
