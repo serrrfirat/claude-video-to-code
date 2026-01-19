@@ -12,15 +12,21 @@ A Claude Code plugin that converts video animations, GIFs, and interactive demos
 
 ## Installation
 
-### 1. Add the plugin to Claude Code
+### 1. Clone the plugin
 
 ```bash
-claude mcp add-json video-to-code '{"type": "project", "scope": "global", "path": "/path/to/claude-video-to-code"}'
+git clone https://github.com/serrrfirat/claude-video-to-code.git
 ```
 
-Or manually add to your Claude Code settings.
+### 2. Load the plugin in Claude Code
 
-### 2. Set up Gemini API Key
+```bash
+claude --plugin-dir /path/to/claude-video-to-code
+```
+
+Or add to your Claude Code settings for persistent use.
+
+### 3. Set up Gemini API Key
 
 1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
 2. Click "Create API key"
@@ -32,27 +38,61 @@ export GEMINI_API_KEY="your-api-key-here"
 
 4. Restart your terminal and Claude Code
 
+### 4. Install dependencies (optional)
+
+Run the setup script to pre-install dependencies:
+
+```bash
+cd /path/to/claude-video-to-code
+./scripts/setup.sh
+```
+
+## Plugin Structure
+
+```
+video-to-code/
+├── .claude-plugin/
+│   └── plugin.json         # Plugin manifest
+├── commands/
+│   └── convert.md          # /video-to-code:convert command
+├── skills/
+│   └── video-to-code/
+│       └── SKILL.md        # Agent skill for video conversion
+├── scripts/
+│   ├── download-video.mjs  # Puppeteer video downloader
+│   ├── analyze-video.mjs   # Gemini video analyzer
+│   └── setup.sh            # Dependency installer
+└── README.md
+```
+
 ## Usage
 
-Just ask Claude to convert a video to code:
+### Slash Command
 
 ```
-/video-to-code
+/video-to-code:convert https://example.com/page-with-animation
 ```
 
-Or describe what you want:
+### Natural Language
+
+Just describe what you want:
 
 - "Convert this video animation to React code"
 - "Replicate this interaction from the video"
 - "Build this GIF animation in React"
 - "Implement this motion effect"
 
-### Supported Input Types
+### Standalone Scripts
 
-- Direct video URLs (mp4, webm)
-- GIF URLs
-- Webpage URLs containing video/animation
-- Local video file paths
+You can also run the scripts directly:
+
+```bash
+# Download video from authenticated URL
+node scripts/download-video.mjs "https://example.com/page" /tmp/animation.mp4
+
+# Analyze video with Gemini
+node scripts/analyze-video.mjs /tmp/animation.mp4 /tmp/spec.md
+```
 
 ## How It Works
 
@@ -95,6 +135,16 @@ Preview at `http://localhost:[PORT]/__animation_lab`
 - Google Gemini API key
 - React project (Next.js or Vite recommended)
 - `framer-motion` for most animations
+
+## Development
+
+Test changes locally:
+
+```bash
+claude --plugin-dir ./claude-video-to-code
+```
+
+Restart Claude Code to pick up changes after editing plugin files.
 
 ## License
 
